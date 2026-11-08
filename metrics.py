@@ -21,3 +21,7 @@ def sensitivity(tp, fn):
 
 def specificity(tn, fp):
     return (tn / (tn + fp))
+
+def log_loss(y, p):
+    p = np.clip(p, 1e-15, 1 - 1e-15)
+    return  np.mean(-(y * np.log(p) + (1 - y) * np.log(1-p)))
