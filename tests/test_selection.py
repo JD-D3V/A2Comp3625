@@ -192,3 +192,15 @@ def test_profit_ceiling_half_customer():
     # Catches: the ceiling ignoring the part of the next customer that would fit.
     ceiling = profit_ceiling([10.0, 6.0], [10, 10], budget=15)
     assert ceiling == pytest.approx(13)
+
+
+# ================================================ Task 3: exact borderline search
+
+
+def test_beats_greedy_on_the_game():
+    # Catches: stopping at plain greedy. Greedy takes A then fills with D and E
+    # ($5,050); the best answer is B and C together ($5,600).
+    profit = np.array([3_600.0, 2_800.0, 2_800.0, 1_000.0, 450.0])
+    coverage = np.array([120_000, 100_000, 100_000, 50_000, 30_000])
+    is_chosen = choose_customers(profit, coverage, budget=200_000)
+    assert is_chosen.tolist() == [False, True, True, False, False]

@@ -8,6 +8,11 @@ gain. We want the most total expected profit without going over the budget.
 import numpy as np
 
 BUDGET = 100_000_000
+CORE_SIZE = 300  # how many borderline customers get the exact search
+MAX_STATES = 200_000  # if the exact search keeps more options than this, fall back
+TABLE_CELLS = 200_000  # the fallback table never has more cells than this
+
+last_method = ""  # which path the last call used: "all fit", "exact" or "table"
 
 
 def _clean(expected_profit, coverage):
@@ -40,6 +45,7 @@ def choose_customers(expected_profit, coverage, budget=BUDGET):
     :param budget: the most total coverage we can take on
     :return: numpy bool array, True for each customer we take
     """
+    global last_method
     profit, coverage = _clean(expected_profit, coverage)
     is_chosen = np.zeros(len(profit), dtype=bool)
     eligible = _eligible(profit, coverage, budget)
@@ -47,12 +53,24 @@ def choose_customers(expected_profit, coverage, budget=BUDGET):
     # If every profitable customer fits, take them all.
     if coverage[eligible].sum() <= budget:
         is_chosen[eligible] = True
+        last_method = "all fit"
         return is_chosen
 
-    # Otherwise go down the ranking, taking each customer that still fits.
-    budget_left = budget
-    for customer in _rank(profit, coverage, eligible):
-        if coverage[customer] <= budget_left:
+    # Find the cut-off: how far down the ranking we get before the budget runs out.
+    ranked = _rank(profit, coverage, eligible)
+    running_coverage = np.cumsum(coverage[ranked])
+    cut_off = int(np.searchsorted(running_coverage, budget, side="right"))
+    core_start = max(0, cut_off - CORE_SIZE // 2)
+    core_end = min(len(ranked), cut_off + CORE_SIZE // 2)
+
+    # Clear winners above the borderline group are locked in.
+    locked_in = ranked[:core_start]
+    is_chosen[locked_in] = True
+
+    # Spend any budget still left on the best customers that still fit.
+    budget_left = budget - coverage[is_chosen].sum()
+    for customer in ranked[core_start:]:
+        if not is_chosen[customer] and coverage[customer] <= budget_left:
             is_chosen[customer] = True
             budget_left -= coverage[customer]
     return is_chosen
