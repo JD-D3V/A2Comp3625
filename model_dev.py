@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-
+from feature_search import search
 
 # load historical customer data
 customer_data = pd.read_csv('./data/customer_data.csv', index_col=None)
@@ -66,3 +66,9 @@ test_model.fit(X_train, y_train, list(X_train.columns))
 predics = test_model.predict_proba(X_test)
 print("Predictions shape:", predics.shape)
 print("5 sample predictions:", predics[:5])
+
+best_features, best_params = search(X_train, y_train, make_model=StandInModel)
+final_model = StandInModel()
+final_model.fit(X_train, y_train, best_features, **best_params)
+# saving the model to a file so that it can be used later for making predictions on new customer data
+#final_model.save("saved_model.npz")
