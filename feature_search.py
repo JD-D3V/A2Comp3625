@@ -43,3 +43,30 @@ def cross_validate(X, y, features, make_model, k=5, **params):
     # average the validation losses across all folds and return it
     return np.mean(val_losses)
 
+def search(X, y, make_model):
+    selected_features = []
+    remaining_features = list(X.columns)
+    best_score = float('inf') # since we want log loss to be as low as possible, we will start with the best score as infinity
+
+    while True:
+        best_candidate = None
+        round_best_score = float('inf')
+
+        for candidate in remaining_features:
+            test_features = selected_features + [candidate]
+            score = cross_validate(X, y, test_features, make_model)
+            # getting the best score for this round of feature selection
+            if score < round_best_score:
+                round_best_score = score
+                best_candidate = candidate
+        # getting best score globaly
+        if round_best_score < best_score:
+            best_score = round_best_score
+            selected_features.append(best_candidate)
+            remaining_features.remove(best_candidate)
+            print(f"Added {best_candidate}, new cross validation loss: {best_score}")
+        else:
+            print("No improvement, stopping the search")
+            break
+
+    return selected_features, {}
