@@ -19,3 +19,5 @@ def accuracy(tp, tn, fp, fn):
 def sensitivity(tp, fn):
     return (tp / (tp + fn))
 
+def specificity(tn, fp):
+    return (tn / (tn + fp))
