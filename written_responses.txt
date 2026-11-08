@@ -1,0 +1,22 @@
+Question 0:
+Report the line number(s) where your program performs utility calculations
+
+
+
+
+Question 1:
+The supervised learning model you used: report its accuracy, sensitivity, and specificity in predicting claims.
+Refer to specific line numbers where these things are measured.
+
+
+
+
+
+Question 2:
+How confident are you that your model has not overfit the historical data? Why?
+
+
+
+
+Question 3:
+In this assignment scenario, which party is acting according to the principle of maximum expected utililty? The customer? Your program? Both?
