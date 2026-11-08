@@ -16,3 +16,6 @@ def accuracy(tp, tn, fp, fn):
     correct = tp + tn 
     return correct / total 
 
+def sensitivity(tp, fn):
+    return (tp / (tp + fn))
+
