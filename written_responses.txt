@@ -1,8 +1,13 @@
 Question 0:
 Report the line number(s) where your program performs utility calculations
 
-
-
+pricing.py:
+    - 22  utility(): the utility function from the assignment
+    - 27  inverse_utility(): converts a utility back into dollars
+    - 36  eu_uninsured(): expected utility of going uninsured
+    - 44  max_premium(): highest premium the customer would accept
+    - 49  passes_utility_check(): U(-premium) > EU(uninsured)
+    - 77  set_prices(): applies the check to every premium before returning them
 
 Question 1:
 The supervised learning model you used: report its accuracy, sensitivity, and specificity in predicting claims.
