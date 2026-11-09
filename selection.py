@@ -36,42 +36,81 @@ def _rank(profit, coverage, customers):
     return customers[np.argsort(-profit_per_dollar, kind="stable")]
 
 
+def _add_customer(
+    option_coverage, option_profit, customer_coverage, customer_profit, budget
+):
+    """Every option can skip this customer, or take them if they still fit.
+
+    :return: (coverage, profit, came_from, took_customer) for all the new options
+    """
+    can_take = option_coverage + customer_coverage <= budget
+    new_coverage = np.concatenate(
+        [option_coverage, option_coverage[can_take] + customer_coverage]
+    )
+    new_profit = np.concatenate(
+        [option_profit, option_profit[can_take] + customer_profit]
+    )
+    came_from = np.concatenate(
+        [np.arange(len(option_coverage)), np.flatnonzero(can_take)]
+    )
+    took_customer = np.concatenate(
+        [np.zeros(len(option_coverage), bool), np.ones(can_take.sum(), bool)]
+    )
+    return new_coverage, new_profit, came_from, took_customer
+
+
+def _keep_undominated(option_coverage, option_profit):
+    """Positions of the options worth keeping: sorted cheapest first, each one
+    earning more than every cheaper option."""
+    order = np.lexsort((-option_profit, option_coverage))
+    sorted_profit = option_profit[order]
+    best_cheaper_profit = np.maximum.accumulate(
+        np.concatenate([[-np.inf], sorted_profit[:-1]])
+    )
+    return order[sorted_profit > best_cheaper_profit]
+
+
+def _walk_back(history, best_option):
+    """Follow the breadcrumbs from the best final option back to the first
+    customer, listing every customer that option took."""
+    chosen_positions = []
+    option = best_option
+    for position in range(len(history) - 1, -1, -1):
+        came_from, took_customer = history[position]
+        if took_customer[option]:
+            chosen_positions.append(position)
+        option = came_from[option]
+    return chosen_positions
+
+
 def _exact_dollar_core(coverage, profit, budget, max_states=None):
     """Find the most profitable group of the given customers within the budget.
 
     The customers must already be ranked best first. We go through them one at
-    a time and keep a list of "options": each option is a group of customers
-    picked so far, stored as its total coverage and total profit.
+    a time and keep a list of "options" (groups picked so far). Dominated
+    options are dropped, and each option remembers where it came from so we
+    can walk back at the end and see who the best one took.
+
+    :return: (positions of the chosen customers, largest number of options kept)
     """
     if max_states is None:
         max_states = MAX_STATES
     option_coverage = np.array([0.0])
     option_profit = np.array([0.0])
+    history = []  # for each customer: (which earlier option, did we take them?)
     peak_states = 1
 
     for position in range(len(coverage)):
-        # Every option can skip this customer, or take them if they still fit.
-        can_take = option_coverage + coverage[position] <= budget
-        all_coverage = np.concatenate(
-            [option_coverage, option_coverage[can_take] + coverage[position]]
+        all_coverage, all_profit, came_from, took_customer = _add_customer(
+            option_coverage, option_profit, coverage[position], profit[position], budget
         )
-        all_profit = np.concatenate(
-            [option_profit, option_profit[can_take] + profit[position]]
-        )
-
-        # Drop dominated options: sort by coverage, keep an option only if it
-        # earns more than every cheaper option.
-        order = np.lexsort((-all_profit, all_coverage))
-        all_coverage, all_profit = all_coverage[order], all_profit[order]
-        best_cheaper_profit = np.maximum.accumulate(
-            np.concatenate([[-np.inf], all_profit[:-1]])
-        )
-        is_useful = all_profit > best_cheaper_profit
-        option_coverage = all_coverage[is_useful]
-        option_profit = all_profit[is_useful]
+        keep = _keep_undominated(all_coverage, all_profit)
+        option_coverage, option_profit = all_coverage[keep], all_profit[keep]
+        history.append((came_from[keep], took_customer[keep]))
         peak_states = max(peak_states, len(option_coverage))
 
-    return option_profit.max(), peak_states
+    best_option = int(np.argmax(option_profit))
+    return _walk_back(history, best_option), peak_states
 
 
 def choose_customers(expected_profit, coverage, budget=BUDGET):
@@ -104,6 +143,15 @@ def choose_customers(expected_profit, coverage, budget=BUDGET):
     # Clear winners above the borderline group are locked in.
     locked_in = ranked[:core_start]
     is_chosen[locked_in] = True
+
+    # The borderline group gets the exact search.
+    borderline = ranked[core_start:core_end]
+    budget_for_borderline = budget - coverage[locked_in].sum()
+    picks, _ = _exact_dollar_core(
+        coverage[borderline], profit[borderline], budget_for_borderline
+    )
+    last_method = "exact"
+    is_chosen[borderline[picks]] = True
 
     # Spend any budget still left on the best customers that still fit.
     budget_left = budget - coverage[is_chosen].sum()
