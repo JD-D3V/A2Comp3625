@@ -1,5 +1,5 @@
 """
-Part C: utility and pricing.
+utility and pricing.
 
 Every function works on single numbers or on whole numpy arrays, and so on one customer,
 or on multiple customers
