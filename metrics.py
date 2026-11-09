@@ -25,3 +25,18 @@ def specificity(tn, fp):
 def log_loss(y, p):
     p = np.clip(p, 1e-15, 1 - 1e-15)
     return  np.mean(-(y * np.log(p) + (1 - y) * np.log(1-p)))
+
+def report(y, p, cutoff=0.5):
+    """Print all of the above in one place"""
+    conf_matrix = confusion_matrix(y, p, cutoff)
+    true_pos = conf_matrix[0]
+    true_neg = conf_matrix[1]
+    false_pos = conf_matrix[2]
+    false_neg = conf_matrix[3]
+
+    print(f"Cutoff: {cutoff}")
+    print(f"TP: {true_pos}\tTN: {true_neg}\tFP: {false_pos}\tFN: {false_neg}")
+    print(f"Accuracy: {accuracy(true_pos, true_neg, false_pos, false_neg)}")
+    print(f"Sensitivity: {sensitivity(true_pos, false_neg)}")
+    print(f"Specificity: {specificity(true_neg, false_pos)}")
+    print(f"Log-loss: {log_loss(y, p):.4f}")
