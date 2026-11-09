@@ -45,3 +45,8 @@ final_model.fit(X_train, y_train, best_features, **best_params)
 # saving the model to a file so that it can be used later for making predictions on new customer data
 final_model.save("saved_model.npz")
 print("Saved saved_model.npz with features:", best_features, "and params:", best_params)
+
+# Joseph's calibration step (calibration.py): corrects the model's probabilities
+from calibration import fit_and_save
+fit_and_save(X_train, y_train, best_features, best_params, "calibration.npz")
+print("Saved calibration.npz")
