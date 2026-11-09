@@ -52,3 +52,13 @@ def calibration_table(y, p, groups=10):
         rows.append((predicted, actual))
         print(f"{g:>5}  {predicted:>15.3f}  {actual:>17.3f}")
     return rows
+
+if __name__ == "__main__":
+    # baseline: predict the average claim rate for everyone
+    y = pd.read_csv("./data/customer_claims.csv")["claim"].to_numpy()
+    test_mask = np.arange(len(y)) % 5 == 0
+    y_train, y_test = y[~test_mask], y[test_mask]
+
+    p = np.full(len(y_test), y_train.mean())
+    report(y_test, p)
+    report(y_test, p, cutoff=0.3)
