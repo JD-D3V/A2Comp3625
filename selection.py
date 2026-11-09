@@ -36,6 +36,44 @@ def _rank(profit, coverage, customers):
     return customers[np.argsort(-profit_per_dollar, kind="stable")]
 
 
+def _exact_dollar_core(coverage, profit, budget, max_states=None):
+    """Find the most profitable group of the given customers within the budget.
+
+    The customers must already be ranked best first. We go through them one at
+    a time and keep a list of "options": each option is a group of customers
+    picked so far, stored as its total coverage and total profit.
+    """
+    if max_states is None:
+        max_states = MAX_STATES
+    option_coverage = np.array([0.0])
+    option_profit = np.array([0.0])
+    peak_states = 1
+
+    for position in range(len(coverage)):
+        # Every option can skip this customer, or take them if they still fit.
+        can_take = option_coverage + coverage[position] <= budget
+        all_coverage = np.concatenate(
+            [option_coverage, option_coverage[can_take] + coverage[position]]
+        )
+        all_profit = np.concatenate(
+            [option_profit, option_profit[can_take] + profit[position]]
+        )
+
+        # Drop dominated options: sort by coverage, keep an option only if it
+        # earns more than every cheaper option.
+        order = np.lexsort((-all_profit, all_coverage))
+        all_coverage, all_profit = all_coverage[order], all_profit[order]
+        best_cheaper_profit = np.maximum.accumulate(
+            np.concatenate([[-np.inf], all_profit[:-1]])
+        )
+        is_useful = all_profit > best_cheaper_profit
+        option_coverage = all_coverage[is_useful]
+        option_profit = all_profit[is_useful]
+        peak_states = max(peak_states, len(option_coverage))
+
+    return option_profit.max(), peak_states
+
+
 def choose_customers(expected_profit, coverage, budget=BUDGET):
     """Return a boolean mask of the customers to insure.
 
