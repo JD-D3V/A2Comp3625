@@ -58,10 +58,11 @@ def _knapsack_table(profit, coverage, budget):
             best_profit = np.maximum(best_profit, with_customer)
 
     chosen_positions = []
+    blocks_left = cells
     for position in reversed(range(len(profit))):
-        if took[position, cells]:
+        if took[position, blocks_left]:
             chosen_positions.append(position)
-            cells -= size[position]
+            blocks_left -= size[position]
     return chosen_positions
 
 

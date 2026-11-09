@@ -13,10 +13,8 @@ Method: a binned table, chosen because it is simple to explain and it fit best.
    (pool adjacent violators), so a higher prediction never means a lower one after.
 4. Between group centres, draw straight lines; past the end groups, stay flat.
 
-Platt scaling (a 1-D logistic regression on logit p) can only stretch or shift the
-curve, and here the model is too high at both ends but too low in the middle, so
-it barely helped. On training rows, 20 groups beat Platt and plain isotonic
-regression in cross-validated log-loss and gives a smooth, monotone curve.
+On training rows, 20 groups beat Platt scaling and plain isotonic regression in
+cross-validated log-loss.
 
 The table is learned only from training rows, using out-of-fold predictions: each
 row's probability comes from a model that did not see that row, the way new
@@ -31,12 +29,12 @@ GROUPS = 20  # about 4,000 training customers per group
 FOLDS = 5
 
 
-def out_of_fold_predictions(X, y, features, folds=FOLDS, **params):
+def out_of_fold_predictions(X, y, features):
     """Claim probability for each row from a ClaimModel trained without that row."""
-    fold = np.arange(len(X)) % folds
+    fold = np.arange(len(X)) % FOLDS
     predictions = np.zeros(len(X))
-    for f in range(folds):
-        model = ClaimModel().fit(X[fold != f], y[fold != f], features, **params)
+    for f in range(FOLDS):
+        model = ClaimModel().fit(X[fold != f], y[fold != f], features)
         predictions[fold == f] = model.predict_proba(X[fold == f])
     return predictions
 
@@ -96,12 +94,13 @@ class Calibration:
         return calibration
 
 
-def fit_and_save(X_train, y_train, features, params, path="calibration.npz"):
+def fit_and_save(X_train, y_train, features, path="calibration.npz"):
     """Learn the table from out-of-fold predictions on the training rows and save it.
 
-    features and params must be the ones the saved claim model was trained with.
+    features must be the ones the saved claim model was trained with, using the
+    default settings.
     """
-    p = out_of_fold_predictions(X_train, y_train, features, **params)
+    p = out_of_fold_predictions(X_train, y_train, features)
     calibration = Calibration().fit(p, y_train)
     calibration.save(path)
     return calibration
@@ -128,7 +127,7 @@ if __name__ == "__main__":
         raise SystemExit("saved_model.npz wasn't trained with the default settings")
 
     calibration = fit_and_save(
-        X_train, y_train, saved.features, {}, folder / "calibration.npz"
+        X_train, y_train, saved.features, folder / "calibration.npz"
     )
     print("group  model p  corrected p")
     for g, (before, after) in enumerate(

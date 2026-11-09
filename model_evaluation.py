@@ -5,7 +5,7 @@ import pandas as pd
 
 from calibration import Calibration
 from claim_model import ClaimModel
-from pricing import set_prices, utility
+from pricing import BASE_WEALTH, passes_utility_check, set_prices
 from selection import choose_customers
 
 # Found relative to this file, so it works whatever folder the grader runs from.
@@ -13,7 +13,6 @@ MODEL_PATH = Path(__file__).resolve().parent / "saved_model.npz"
 CALIBRATION_PATH = Path(__file__).resolve().parent / "calibration.npz"
 
 SHARE_OF_ROOM = 0.5  # price halfway between break-even and the customer's max
-MAX_COVERAGE = 150_000  # the utility curve's ln($ + 150,000) breaks at this loss
 
 
 def _load_model():
@@ -54,7 +53,7 @@ def set_premium(customer_data: pd.DataFrame) -> pd.DataFrame:
         (claim_probability > 0)
         & (claim_probability < 1)
         & (coverage >= 1)
-        & (coverage < MAX_COVERAGE)
+        & (coverage < BASE_WEALTH)
     )
     premium = np.nan_to_num(claim_probability * coverage)
     premium[is_priceable] = set_prices(
@@ -62,14 +61,11 @@ def set_premium(customer_data: pd.DataFrame) -> pd.DataFrame:
     )
 
     # The utility check: a customer only buys if paying the premium feels better
-    # than the gamble of going uninsured. The errstate line silences warnings
-    # from customers we skipped (their ln() can be undefined).
+    # than the gamble of going uninsured (skipped customers can make ln() undefined).
     with np.errstate(invalid="ignore", divide="ignore"):
-        utility_if_insured = utility(-premium)
-        utility_if_uninsured = claim_probability * utility(-coverage) + (
-            1 - claim_probability
-        ) * utility(0)
-    is_better_off_insured = is_priceable & (utility_if_insured > utility_if_uninsured)
+        is_better_off_insured = is_priceable & passes_utility_check(
+            premium, claim_probability, coverage
+        )
 
     # Customers who won't buy are worth nothing to us, so choose_customers skips them.
     expected_profit = np.where(
