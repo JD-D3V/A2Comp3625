@@ -1,7 +1,9 @@
+import os
+
 import pandas as pd
 import numpy as np
 
-from metrics import log_loss, report
+from metrics import log_loss, report, calibration_table
 
 def sigmoid(z):
     z = np.clip(z, -30, 30)
@@ -95,3 +97,36 @@ class ClaimModel:
             model.mu2 = data["mu2"]
             model.sd2 = data["sd2"]
         return model
+
+
+if __name__ == "__main__":
+    customer_data = pd.read_csv("./data/customer_data.csv")
+    y = pd.read_csv("./data/customer_claims.csv")["claim"].to_numpy()
+
+    test_mask = customer_data.index % 5 == 0
+    X_train, y_train = customer_data[~test_mask], y[~test_mask]
+    X_test, y_test = customer_data[test_mask], y[test_mask]
+
+    features = list(customer_data.columns)
+
+    print("Plain logistic regression")
+    plain = ClaimModel().fit(X_train, y_train, features, interactions=False)
+    report(y_test, plain.predict_proba(X_test))
+
+    print("\nWith squares and pairs")
+    model = ClaimModel().fit(X_train, y_train, features)
+    p_test = model.predict_proba(X_test)
+    report(y_test, p_test)
+    print(f"Train log-loss: {log_loss(y_train, model.predict_proba(X_train)):.4f}")
+    calibration_table(y_test, p_test)
+    print()
+
+    shuffled = X_test[X_test.columns[::-1]]
+    print("column order safe:", np.allclose(p_test, model.predict_proba(shuffled)))
+
+    model.save("round_trip_check.npz")
+    loaded = ClaimModel.load("round_trip_check.npz")
+    os.remove("round_trip_check.npz")
+    print("save/load round trip:", np.allclose(p_test, loaded.predict_proba(X_test)))
+
+    print("single customer shape:", model.predict_proba(X_test.iloc[[0]]).shape)
