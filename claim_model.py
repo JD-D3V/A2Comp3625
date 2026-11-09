@@ -74,3 +74,24 @@ class ClaimModel:
         if self.interactions:
             A = (expand(A) - self.mu2) / self.sd2
         return sigmoid(A @ self.w + self.b)
+
+    def save(self, path="saved_model.npz"):
+        np.savez(path, features=np.array(self.features), mu=self.mu, sd=self.sd,
+                 w=self.w, b=self.b, interactions=self.interactions,
+                 mu2=self.mu2 if self.interactions else np.zeros(0),
+                 sd2=self.sd2 if self.interactions else np.zeros(0))
+
+    @staticmethod
+    def load(path="saved_model.npz"):
+        data = np.load(path)
+        model = ClaimModel()
+        model.features = [str(f) for f in data["features"]]
+        model.mu = data["mu"]
+        model.sd = data["sd"]
+        model.w = data["w"]
+        model.b = float(data["b"])
+        model.interactions = bool(data["interactions"])
+        if model.interactions:
+            model.mu2 = data["mu2"]
+            model.sd2 = data["sd2"]
+        return model
