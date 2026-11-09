@@ -1,4 +1,4 @@
-"""Tests for selection.choose_customers and selection.profit_ceiling.
+"""Tests for selection.choose_customers.
 
 Designed with equivalence class partitioning (one test per group of inputs that
 should behave the same) and boundary value analysis (values on and either side
@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 import selection
-from selection import choose_customers, profit_ceiling
+from selection import choose_customers
 
 
 def best_possible_profit(profit, coverage, budget):
@@ -42,6 +42,24 @@ def greedy_profit(profit, coverage, budget):
     return total
 
 
+def profit_ceiling(profit, coverage, budget):
+    """The most profit any selection could make, if we could insure part of the
+    first customer who doesn't fully fit. No real selection can beat it."""
+    profit = np.asarray(profit, dtype=float)
+    coverage = np.asarray(coverage, dtype=float)
+    is_usable = (profit > 0) & (coverage > 0) & (coverage <= budget)
+    usable = np.flatnonzero(is_usable)
+    ranked = usable[np.argsort(-profit[usable] / coverage[usable], kind="stable")]
+    total = 0.0
+    budget_left = budget
+    for customer in ranked:
+        if coverage[customer] > budget_left:
+            return total + profit[customer] * budget_left / coverage[customer]
+        total += profit[customer]
+        budget_left -= coverage[customer]
+    return total
+
+
 def assert_valid(is_chosen, profit, coverage, budget):
     """The rules every selection must follow, whatever the input."""
     profit = np.asarray(profit, dtype=float)
@@ -53,35 +71,26 @@ def assert_valid(is_chosen, profit, coverage, budget):
     assert (profit[is_chosen] > 0).all()
 
 
-# ---------------------------------------------------------------- profit edges
+# ------------------------------------------------- who can never be taken
 
 
-def test_profit_boundary():
-    # Catches: using >= 0 instead of > 0, which would insure break-even customers.
-    profit = np.array([-0.01, 0.0, 0.01])
-    coverage = np.array([1_000, 1_000, 1_000])
+@pytest.mark.parametrize(
+    "profit, coverage, expected",
+    [
+        ([-0.01, 0.0, 0.01], [1_000] * 3, [False, False, True]),
+        ([np.nan, np.inf, -np.inf, 5.0], [1_000] * 4, [False, False, False, True]),
+        ([10.0] * 3, [-1, 0, 1], [False, False, True]),
+        ([10.0] * 2, [np.nan, 5_000], [False, True]),
+    ],
+    ids=["profit at zero", "profit not finite", "coverage at zero", "coverage NaN"],
+)
+def test_never_takes_impossible_customers(profit, coverage, expected):
+    # Catches: >= 0 instead of > 0 (insuring break-even customers), NaN or
+    # infinite profit wrecking the ranking, zero or negative coverage counted as
+    # "free" profit, and NaN coverage passing the budget check (NaN compares False).
+    profit, coverage = np.array(profit), np.array(coverage, dtype=float)
     is_chosen = choose_customers(profit, coverage, budget=1_000_000)
-    assert is_chosen.tolist() == [False, False, True]
-    assert_valid(is_chosen, profit, coverage, 1_000_000)
-
-
-def test_profit_not_finite():
-    # Catches: NaN or infinite profit slipping through and wrecking the ranking.
-    profit = np.array([np.nan, np.inf, -np.inf, 5.0])
-    coverage = np.array([1_000, 1_000, 1_000, 1_000])
-    is_chosen = choose_customers(profit, coverage, budget=1_000_000)
-    assert is_chosen.tolist() == [False, False, False, True]
-
-
-# -------------------------------------------------------------- coverage edges
-
-
-def test_coverage_low_boundary():
-    # Catches: zero or negative coverage counted as "free" profit.
-    profit = np.array([10.0, 10.0, 10.0])
-    coverage = np.array([-1, 0, 1])
-    is_chosen = choose_customers(profit, coverage, budget=1_000_000)
-    assert is_chosen.tolist() == [False, False, True]
+    assert is_chosen.tolist() == expected
 
 
 @pytest.mark.parametrize(
@@ -92,14 +101,6 @@ def test_single_customer_vs_budget(coverage, expected):
     # Catches: off-by-one (< instead of <=) when a policy uses the whole budget.
     is_chosen = choose_customers(np.array([5.0]), np.array([coverage]), budget=1_000)
     assert is_chosen.tolist() == [expected]
-
-
-def test_coverage_nan():
-    # Catches: NaN coverage passing the budget check (NaN comparisons are False).
-    profit = np.array([10.0, 10.0])
-    coverage = np.array([np.nan, 5_000])
-    is_chosen = choose_customers(profit, coverage, budget=1_000_000)
-    assert is_chosen.tolist() == [False, True]
 
 
 # ------------------------------------------------- total coverage vs budget
@@ -194,36 +195,7 @@ def test_input_types(convert_inputs):
     assert is_chosen.tolist() == expected.tolist()
 
 
-# ------------------------------------------------------- many random customers
-
-
-def test_random_many():
-    # Catches: any rule break on realistic data, and answers above the ceiling.
-    random_generator = np.random.default_rng(1)
-    profit = random_generator.uniform(-500, 3_000, 5_000)
-    coverage = random_generator.integers(1_000, 140_000, 5_000)
-    is_chosen = choose_customers(profit, coverage, budget=10_000_000)
-    assert_valid(is_chosen, profit, coverage, 10_000_000)
-    ceiling = profit_ceiling(profit, coverage, 10_000_000)
-    assert profit[is_chosen].sum() <= ceiling + 1e-6
-
-
-# ------------------------------------------------------------- profit ceiling
-
-
-def test_profit_ceiling_everyone_fits():
-    # Catches: the ceiling counting money-losing customers.
-    ceiling = profit_ceiling([5.0, -1.0, 3.0], [1, 1, 1], budget=10)
-    assert ceiling == pytest.approx(8)
-
-
-def test_profit_ceiling_half_customer():
-    # Catches: the ceiling ignoring the part of the next customer that would fit.
-    ceiling = profit_ceiling([10.0, 6.0], [10, 10], budget=15)
-    assert ceiling == pytest.approx(13)
-
-
-# ================================================ Task 3: exact borderline search
+# ------------------------------------------------- the knapsack table search
 
 
 def test_beats_greedy_on_the_game():
@@ -233,24 +205,39 @@ def test_beats_greedy_on_the_game():
     coverage = np.array([120_000, 100_000, 100_000, 50_000, 30_000])
     is_chosen = choose_customers(profit, coverage, budget=200_000)
     assert is_chosen.tolist() == [False, True, True, False, False]
-    assert selection.last_method == "exact"
 
 
-def test_matches_brute_force():
-    # Catches: any mistake in the exact search, by checking it against every
-    # possible combination on 200 small random cases.
+def test_matches_brute_force_on_whole_blocks():
+    # Catches: any mistake in the table, by checking it against every possible
+    # combination on 200 small random cases. Coverage is in whole $25 blocks,
+    # so the table's rounding changes nothing and it must find the best answer.
     random_generator = np.random.default_rng(3)
+    block = selection.DOLLARS_PER_CELL
     for _ in range(200):
         profit = random_generator.uniform(1, 3_000, 12)
-        coverage = random_generator.integers(1_000, 140_000, 12).astype(float)
+        coverage = random_generator.integers(40, 5_600, 12).astype(float) * block
         is_chosen = choose_customers(profit, coverage, budget=300_000)
         assert_valid(is_chosen, profit, coverage, 300_000)
         best = best_possible_profit(profit, coverage, 300_000)
         assert profit[is_chosen].sum() == pytest.approx(best)
 
 
+def test_close_to_brute_force_with_rounding():
+    # Catches: the $25 rounding costing more than a sliver. With any coverage,
+    # the answer must be within 1% of the true best and never above it.
+    random_generator = np.random.default_rng(13)
+    for _ in range(100):
+        profit = random_generator.uniform(1, 3_000, 12)
+        coverage = random_generator.integers(1_000, 140_000, 12).astype(float)
+        is_chosen = choose_customers(profit, coverage, budget=300_000)
+        assert_valid(is_chosen, profit, coverage, 300_000)
+        best = best_possible_profit(profit, coverage, 300_000)
+        assert 0.99 * best <= profit[is_chosen].sum() <= best + 1e-6
+
+
 def test_never_worse_than_greedy():
-    # Catches: the exact search throwing away a customer greedy would keep.
+    # Catches: any rule break on realistic data, answers above the ceiling, and
+    # the table throwing away a customer greedy would keep.
     random_generator = np.random.default_rng(4)
     profit = random_generator.uniform(-200, 3_000, 3_000)
     coverage = random_generator.integers(1_000, 140_000, 3_000)
@@ -259,6 +246,19 @@ def test_never_worse_than_greedy():
     greedy = greedy_profit(profit, coverage, 20_000_000)
     assert profit[is_chosen].sum() >= greedy - 1e-6
     assert profit[is_chosen].sum() <= profit_ceiling(profit, coverage, 20_000_000)
+
+
+def test_keeps_greedy_when_it_earns_more(monkeypatch):
+    # Catches: the final greedy check missing. A table that picks nobody must
+    # still end up with greedy's answer.
+    monkeypatch.setattr(selection, "_knapsack_table", lambda *args: [])
+    random_generator = np.random.default_rng(10)
+    profit = random_generator.uniform(1, 3_000, 500)
+    coverage = random_generator.integers(1_000, 140_000, 500)
+    is_chosen = choose_customers(profit, coverage, budget=5_000_000)
+    assert profit[is_chosen].sum() == pytest.approx(
+        greedy_profit(profit, coverage, 5_000_000)
+    )
 
 
 @pytest.mark.parametrize("offset_from_core_size", [-1, 0, 1])
@@ -295,47 +295,13 @@ def test_cut_at_end_of_ranking():
 
 def test_fill_after_borderline_group(monkeypatch):
     # Catches: forgetting the final fill step. With a borderline group of only
-    # 2 (A and B), the search keeps A and leaves $400 unused; C ($300) and
+    # 2 (A and B), the table keeps A and leaves $400 unused; C ($300) and
     # D ($100) sit below the group and fill that gap exactly.
     monkeypatch.setattr(selection, "CORE_SIZE", 2)
     profit = np.array([600.0, 400.0, 60.0, 10.0])
     coverage = np.array([600, 500, 300, 100])
     is_chosen = choose_customers(profit, coverage, budget=1_000)
     assert is_chosen.tolist() == [True, False, True, True]
-
-
-def test_state_limit_boundary():
-    # Catches: switching to the safety net too early or too late.
-    random_generator = np.random.default_rng(6)
-    profit = random_generator.uniform(1, 3_000, 40)
-    coverage = random_generator.integers(1_000, 140_000, 40).astype(float)
-    budget = coverage.sum() / 2
-    picks, peak_states = selection._exact_dollar_core(
-        coverage, profit, budget, max_states=10**9
-    )
-    assert picks is not None
-    at_limit, _ = selection._exact_dollar_core(
-        coverage, profit, budget, max_states=peak_states
-    )
-    one_below, _ = selection._exact_dollar_core(
-        coverage, profit, budget, max_states=peak_states - 1
-    )
-    assert at_limit is not None
-    assert one_below is None
-
-
-def test_safety_net_still_valid(monkeypatch):
-    # Catches: the fallback table going over budget or doing badly. Every
-    # customer is equally good per dollar, the hardest case for the exact search.
-    monkeypatch.setattr(selection, "MAX_STATES", 1)
-    random_generator = np.random.default_rng(7)
-    coverage = random_generator.integers(1_000, 140_000, 2_000).astype(float)
-    profit = coverage * 0.05
-    is_chosen = choose_customers(profit, coverage, budget=10_000_000)
-    assert selection.last_method in {"table", "greedy"}
-    assert_valid(is_chosen, profit, coverage, 10_000_000)
-    ceiling = profit_ceiling(profit, coverage, 10_000_000)
-    assert profit[is_chosen].sum() >= 0.999 * ceiling
 
 
 def test_all_ratios_tied():
@@ -349,164 +315,36 @@ def test_all_ratios_tied():
     assert profit[is_chosen].sum() >= 0.999 * ceiling
 
 
-# ------------------------------------------- the search's helper functions
+# ------------------------------------------------- the table function itself
 
 
-@pytest.mark.parametrize(
-    "dearer_profit, dearer_is_kept",
-    [(9.99, False), (10.0, False), (10.01, True)],
-)
-def test_keep_undominated_boundary(dearer_profit, dearer_is_kept):
-    # Catches: keeping an option that costs more but earns no more (> vs >=).
-    # A $50 option earns $10; a $100 option earns just under, equal, or above.
-    option_coverage = np.array([0.0, 50.0, 100.0])
-    option_profit = np.array([0.0, 10.0, dearer_profit])
-    kept = selection._keep_undominated(option_coverage, option_profit)
-    assert (2 in kept.tolist()) == dearer_is_kept
-    assert kept.tolist()[:2] == [0, 1]
-
-
-def test_keep_undominated_exact_tie_keeps_one():
-    # Catches: keeping both of two identical options (same cost, same profit),
-    # which doubles the work for nothing.
-    option_coverage = np.array([0.0, 100.0, 100.0])
-    option_profit = np.array([0.0, 2_800.0, 2_800.0])
-    kept = selection._keep_undominated(option_coverage, option_profit)
-    assert len(kept) == 2
-
-
-def test_walk_back_follows_breadcrumbs():
-    # Catches: walking the breadcrumbs the wrong way. Two customers; the four
-    # final options are nobody, first only, second only, and both.
-    history = [
-        (np.array([0, 0]), np.array([False, True])),
-        (np.array([0, 1, 0, 1]), np.array([False, False, True, True])),
-    ]
-    assert selection._walk_back(history, 0) == []
-    assert selection._walk_back(history, 1) == [0]
-    assert selection._walk_back(history, 2) == [1]
-    assert sorted(selection._walk_back(history, 3)) == [0, 1]
-
-
-@pytest.mark.parametrize(
-    "option_profit, is_kept",
-    [(53.99, False), (54.0, True), (54.01, True)],
-)
-def test_drop_hopeless_boundary(option_profit, is_kept):
-    # Catches: dropping an option that could still tie or beat the best answer.
-    # Budget 150. Option A (empty) can take the next customer: $60 for sure.
-    # Option B has used $140, so at best it adds 10/100 of that customer ($6).
-    # B is hopeless only if its profit + $6 is below A's $60.
-    kept, best_known = selection._drop_hopeless(
-        np.array([0.0, 140.0]),
-        np.array([0.0, option_profit]),
-        np.array([100.0]),
-        np.array([60.0]),
-        budget=150,
-        best_known_profit=0.0,
+def test_knapsack_table_skip_or_take():
+    # Catches: the skip-or-take rule reading the wrong cell. In whole blocks,
+    # A is 3 blocks ($4.2), B and C are 2 blocks ($2.6 each), budget 4 blocks:
+    # greedy would take A alone ($4.2); B and C together earn $5.2.
+    block = selection.DOLLARS_PER_CELL
+    picks = selection._knapsack_table(
+        np.array([4.2, 2.6, 2.6]), np.array([3, 2, 2]) * block, 4 * block
     )
-    assert best_known == pytest.approx(60.0)
-    assert (1 in kept.tolist()) == is_kept
-    assert 0 in kept.tolist()
-
-
-# --------------------------------------------- choosing among fallback answers
+    assert sorted(picks) == [1, 2]
 
 
 @pytest.mark.parametrize(
-    "budget, expected_cut_off",
-    [(199, 1), (200, 2), (201, 2)],
+    "coverage_each, both_taken",
+    [(24, True), (25, True), (26, False)],
 )
-def test_find_cut_off_boundary(budget, expected_cut_off):
-    # Catches: off-by-one when the running coverage lands exactly on the budget.
-    coverage = np.array([100.0, 100.0, 100.0])
-    ranked = np.array([0, 1, 2])
-    assert selection._find_cut_off(coverage, ranked, budget) == expected_cut_off
-
-
-@pytest.mark.parametrize(
-    "cut_off, number_ranked, expected_bounds",
-    [(0, 10, (0, 10)), (500, 1_000, (350, 650)), (990, 1_000, (840, 1_000))],
-    ids=["cut-off at the start", "cut-off in the middle", "cut-off at the end"],
-)
-def test_core_bounds_stay_inside_the_ranking(cut_off, number_ranked, expected_bounds):
-    # Catches: a borderline group that runs off either end of the ranking.
-    assert selection._core_bounds(cut_off, 300, number_ranked) == expected_bounds
-
-
-def test_greedy_takes_in_ranking_order_while_it_fits():
-    # Catches: greedy skipping a customer who still fits, or overspending.
-    coverage = np.array([600.0, 500.0, 300.0, 100.0])
-    ranked = np.array([0, 1, 2, 3])
-    is_chosen = selection._greedy(coverage, ranked, budget=1_000)
-    assert is_chosen.tolist() == [True, False, True, True]
-
-
-@pytest.mark.parametrize(
-    "greedy_profit_total, expected_winner",
-    [(9.99, "table"), (10.0, "table"), (10.01, "greedy")],
-)
-def test_most_profitable_boundary(greedy_profit_total, expected_winner):
-    # Catches: picking the wrong candidate, or switching on an exact tie.
-    profit = np.array([10.0, greedy_profit_total])
-    candidates = {
-        "table": np.array([True, False]),
-        "greedy": np.array([False, True]),
-    }
-    winner, _ = selection._most_profitable(candidates, profit)
-    assert winner == expected_winner
-
-
-def test_fallback_never_worse_than_greedy_or_table(monkeypatch):
-    # Catches: the fallback returning an answer worse than one it already had.
-    monkeypatch.setattr(selection, "MAX_STATES", 1)
-    random_generator = np.random.default_rng(9)
-    for profit_per_dollar_noise in (0.0, 0.02):
-        coverage = random_generator.integers(1_000, 140_000, 2_000).astype(float)
-        noise = random_generator.uniform(0, profit_per_dollar_noise, 2_000)
-        profit = coverage * (0.05 + noise)
-        budget = 10_000_000
-        is_chosen = choose_customers(profit, coverage, budget=budget)
-        assert_valid(is_chosen, profit, coverage, budget)
-        eligible = selection._eligible(profit, coverage, budget)
-        ranked = selection._rank(profit, coverage, eligible)
-        cut_off = selection._find_cut_off(coverage, ranked, budget)
-        table = selection._solve_core(
-            profit, coverage, ranked, cut_off, budget, 300, use_table=True
-        )
-        greedy = selection._greedy(coverage, ranked, budget)
-        assert profit[is_chosen].sum() >= profit[table].sum() - 1e-6
-        assert profit[is_chosen].sum() >= profit[greedy].sum() - 1e-6
-
-
-def test_fallback_tries_a_smaller_exact_search(monkeypatch):
-    # Catches: never trying the smaller exact search. The limit is set between
-    # what a 150-customer search needs and what a 300-customer search needs.
-    # Nearly tied customers (5-6% profit per dollar) make the search work hard.
-    random_generator = np.random.default_rng(5)
-    coverage = random_generator.integers(1_000, 140_000, 300).astype(float)
-    profit = coverage * (0.05 + random_generator.uniform(0, 0.01, 300))
-    budget = coverage.sum() / 2
-    eligible = selection._eligible(profit, coverage, budget)
-    ranked = selection._rank(profit, coverage, eligible)
-    cut_off = selection._find_cut_off(coverage, ranked, budget)
-
-    def peak_options(core_size):
-        core_start, core_end = selection._core_bounds(cut_off, core_size, len(ranked))
-        locked_in_coverage = coverage[ranked[:core_start]].sum()
-        borderline = ranked[core_start:core_end]
-        _, peak = selection._exact_dollar_core(
-            coverage[borderline],
-            profit[borderline],
-            budget - locked_in_coverage,
-            max_states=10**9,
-        )
-        return peak
-
-    peak_for_150, peak_for_300 = peak_options(150), peak_options(300)
-    assert peak_for_150 < peak_for_300
-    monkeypatch.setattr(selection, "MAX_STATES", peak_for_150)
-    candidates = selection._fallback_candidates(
-        profit, coverage, ranked, cut_off, budget
+def test_knapsack_table_rounds_up(coverage_each, both_taken):
+    # Catches: rounding coverage down (or to nearest), which could overspend.
+    # Budget is two $25 blocks; $26 needs two blocks each, so only one fits.
+    picks = selection._knapsack_table(
+        np.array([10.0, 9.0]), np.array([coverage_each] * 2, dtype=float), 50
     )
-    assert set(candidates) == {"table", "greedy", "exact on 150"}
+    assert (len(picks) == 2) == both_taken
+
+
+def test_knapsack_table_customer_bigger_than_budget():
+    # Catches: index errors when one customer needs more blocks than exist.
+    picks = selection._knapsack_table(
+        np.array([100.0, 1.0]), np.array([1_000.0, 25.0]), 100
+    )
+    assert picks == [1]
