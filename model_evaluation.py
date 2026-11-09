@@ -3,12 +3,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from calibration import Calibration
 from claim_model import ClaimModel
 from pricing import set_prices, utility
 from selection import choose_customers
 
 # Found relative to this file, so it works whatever folder the grader runs from.
 MODEL_PATH = Path(__file__).resolve().parent / "saved_model.npz"
+CALIBRATION_PATH = Path(__file__).resolve().parent / "calibration.npz"
 
 SHARE_OF_ROOM = 0.5  # price halfway between break-even and the customer's max
 MAX_COVERAGE = 150_000  # the utility curve's ln($ + 150,000) breaks at this loss
@@ -17,6 +19,11 @@ MAX_COVERAGE = 150_000  # the utility curve's ln($ + 150,000) breaks at this los
 def _load_model():
     """Load the claim model trained and saved by model_dev.py."""
     return ClaimModel.load(MODEL_PATH)
+
+
+def _load_calibration():
+    """Load the probability correction learned by calibration.py."""
+    return Calibration.load(CALIBRATION_PATH)
 
 
 # At grading time, I will call the below function with a dataframe of new potential customers
@@ -35,7 +42,10 @@ def set_premium(customer_data: pd.DataFrame) -> pd.DataFrame:
             desired_customer:  a boolean column indicating which customers you want to take on
             premium:    the amount of the premium to charge each customer
     """
-    claim_probability = _load_model().predict_proba(customer_data)
+    # The model is off by risk band (too low for the middle band selection
+    # favours), so correct it before pricing, the utility check and selection.
+    model_probability = _load_model().predict_proba(customer_data)
+    claim_probability = _load_calibration().apply(model_probability)
     coverage = customer_data["coverage_amount"].to_numpy(dtype=float)
 
     # Only price customers the utility formula can handle: a real probability,
