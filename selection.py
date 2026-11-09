@@ -4,7 +4,8 @@
 1. Drop customers we could never take.
 2. If everyone left fits, take them all.
 3. Rank by profit per dollar; lock in clear winners above the cut-off.
-4. Search the borderline group exactly (a table takes over if it gets too big).
+4. Search the borderline group exactly. If that gets too big, keep the best of
+   a smaller exact search, a table, and plain greedy.
 5. Fill any leftover budget.
 """
 
@@ -14,8 +15,9 @@ BUDGET = 100_000_000
 CORE_SIZE = 300  # how many borderline customers get the exact search
 MAX_STATES = 200_000  # if the exact search keeps more options than this, fall back
 TABLE_CELLS = 200_000  # the fallback table never has more cells than this
+SMALLER_CORE_SIZES = (150, 75, 40)  # exact searches to try if 300 is too big
 
-last_method = ""  # which path the last call used: "all fit", "exact" or "table"
+last_method = ""  # which answer the last call used, e.g. "exact" or "greedy"
 
 
 def _clean(expected_profit, coverage):
@@ -192,6 +194,82 @@ def _unit_table(coverage, profit, budget):
     return chosen_positions
 
 
+def _find_cut_off(coverage, ranked, budget):
+    """How many ranked customers fit, in order, before the budget runs out."""
+    running_coverage = np.cumsum(coverage[ranked])
+    return int(np.searchsorted(running_coverage, budget, side="right"))
+
+
+def _core_bounds(cut_off, core_size, number_ranked):
+    """Start and end of the borderline group: core_size customers around the cut-off."""
+    core_start = max(0, cut_off - core_size // 2)
+    core_end = min(number_ranked, cut_off + core_size // 2)
+    return core_start, core_end
+
+
+def _fill_leftover(is_chosen, candidates_in_order, coverage, budget):
+    """Spend any budget still left on the best customers that still fit."""
+    budget_left = budget - coverage[is_chosen].sum()
+    for customer in candidates_in_order:
+        if not is_chosen[customer] and coverage[customer] <= budget_left:
+            is_chosen[customer] = True
+            budget_left -= coverage[customer]
+    return is_chosen
+
+
+def _greedy(coverage, ranked, budget):
+    """Plain greedy: take customers in ranking order while they still fit."""
+    is_chosen = np.zeros(len(coverage), dtype=bool)
+    return _fill_leftover(is_chosen, ranked, coverage, budget)
+
+
+def _solve_borderline(coverage, profit, budget, use_table):
+    """Positions to take from the borderline group, or None if the exact search
+    grew too big."""
+    if use_table:
+        return _unit_table(coverage, profit, budget)
+    picks, _ = _exact_dollar_core(coverage, profit, budget)
+    return picks
+
+
+def _solve_core(profit, coverage, ranked, cut_off, budget, core_size, use_table=False):
+    """Lock in clear winners, solve the borderline group, then fill leftover budget.
+    Returns None if the exact search grew too big."""
+    core_start, core_end = _core_bounds(cut_off, core_size, len(ranked))
+    is_chosen = np.zeros(len(profit), dtype=bool)
+    is_chosen[ranked[:core_start]] = True
+    borderline = ranked[core_start:core_end]
+    budget_left = budget - coverage[is_chosen].sum()
+    picks = _solve_borderline(
+        coverage[borderline], profit[borderline], budget_left, use_table
+    )
+    if picks is None:
+        return None
+    is_chosen[borderline[picks]] = True
+    return _fill_leftover(is_chosen, ranked[core_start:], coverage, budget)
+
+
+def _fallback_candidates(profit, coverage, ranked, cut_off, budget):
+    """Quick answers to compare when the main exact search grows too big."""
+    candidates = {
+        "table": _solve_core(
+            profit, coverage, ranked, cut_off, budget, CORE_SIZE, use_table=True
+        ),
+        "greedy": _greedy(coverage, ranked, budget),
+    }
+    for core_size in SMALLER_CORE_SIZES:
+        smaller = _solve_core(profit, coverage, ranked, cut_off, budget, core_size)
+        if smaller is not None:
+            candidates[f"exact on {core_size}"] = smaller
+            break
+    return candidates
+
+
+def _most_profitable(candidates, profit):
+    """The (name, mask) of the candidate answer that earns the most."""
+    return max(candidates.items(), key=lambda candidate: profit[candidate[1]].sum())
+
+
 def choose_customers(expected_profit, coverage, budget=BUDGET):
     """Return a boolean mask of the customers to insure.
 
@@ -203,46 +281,20 @@ def choose_customers(expected_profit, coverage, budget=BUDGET):
     """
     global last_method
     profit, coverage = _clean(expected_profit, coverage)
-    is_chosen = np.zeros(len(profit), dtype=bool)
     eligible = _eligible(profit, coverage, budget)
-
-    # If every profitable customer fits, take them all.
     if coverage[eligible].sum() <= budget:
-        is_chosen[eligible] = True
         last_method = "all fit"
+        return np.isin(np.arange(len(profit)), eligible)
+
+    ranked = _rank(profit, coverage, eligible)
+    cut_off = _find_cut_off(coverage, ranked, budget)
+    is_chosen = _solve_core(profit, coverage, ranked, cut_off, budget, CORE_SIZE)
+    if is_chosen is not None:
+        last_method = "exact"
         return is_chosen
 
-    # Find the cut-off: how far down the ranking we get before the budget runs out.
-    ranked = _rank(profit, coverage, eligible)
-    running_coverage = np.cumsum(coverage[ranked])
-    cut_off = int(np.searchsorted(running_coverage, budget, side="right"))
-    core_start = max(0, cut_off - CORE_SIZE // 2)
-    core_end = min(len(ranked), cut_off + CORE_SIZE // 2)
-
-    # Clear winners above the borderline group are locked in.
-    locked_in = ranked[:core_start]
-    is_chosen[locked_in] = True
-
-    # The borderline group gets the exact search, or the table if it's too big.
-    borderline = ranked[core_start:core_end]
-    budget_for_borderline = budget - coverage[locked_in].sum()
-    picks, _ = _exact_dollar_core(
-        coverage[borderline], profit[borderline], budget_for_borderline
-    )
-    last_method = "exact"
-    if picks is None:
-        picks = _unit_table(
-            coverage[borderline], profit[borderline], budget_for_borderline
-        )
-        last_method = "table"
-    is_chosen[borderline[picks]] = True
-
-    # Spend any budget still left on the best customers that still fit.
-    budget_left = budget - coverage[is_chosen].sum()
-    for customer in ranked[core_start:]:
-        if not is_chosen[customer] and coverage[customer] <= budget_left:
-            is_chosen[customer] = True
-            budget_left -= coverage[customer]
+    candidates = _fallback_candidates(profit, coverage, ranked, cut_off, budget)
+    last_method, is_chosen = _most_profitable(candidates, profit)
     return is_chosen
 
 

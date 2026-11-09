@@ -332,7 +332,7 @@ def test_safety_net_still_valid(monkeypatch):
     coverage = random_generator.integers(1_000, 140_000, 2_000).astype(float)
     profit = coverage * 0.05
     is_chosen = choose_customers(profit, coverage, budget=10_000_000)
-    assert selection.last_method == "table"
+    assert selection.last_method in {"table", "greedy"}
     assert_valid(is_chosen, profit, coverage, 10_000_000)
     ceiling = profit_ceiling(profit, coverage, 10_000_000)
     assert profit[is_chosen].sum() >= 0.999 * ceiling
@@ -408,3 +408,105 @@ def test_drop_hopeless_boundary(option_profit, is_kept):
     assert best_known == pytest.approx(60.0)
     assert (1 in kept.tolist()) == is_kept
     assert 0 in kept.tolist()
+
+
+# --------------------------------------------- choosing among fallback answers
+
+
+@pytest.mark.parametrize(
+    "budget, expected_cut_off",
+    [(199, 1), (200, 2), (201, 2)],
+)
+def test_find_cut_off_boundary(budget, expected_cut_off):
+    # Catches: off-by-one when the running coverage lands exactly on the budget.
+    coverage = np.array([100.0, 100.0, 100.0])
+    ranked = np.array([0, 1, 2])
+    assert selection._find_cut_off(coverage, ranked, budget) == expected_cut_off
+
+
+@pytest.mark.parametrize(
+    "cut_off, number_ranked, expected_bounds",
+    [(0, 10, (0, 10)), (500, 1_000, (350, 650)), (990, 1_000, (840, 1_000))],
+    ids=["cut-off at the start", "cut-off in the middle", "cut-off at the end"],
+)
+def test_core_bounds_stay_inside_the_ranking(cut_off, number_ranked, expected_bounds):
+    # Catches: a borderline group that runs off either end of the ranking.
+    assert selection._core_bounds(cut_off, 300, number_ranked) == expected_bounds
+
+
+def test_greedy_takes_in_ranking_order_while_it_fits():
+    # Catches: greedy skipping a customer who still fits, or overspending.
+    coverage = np.array([600.0, 500.0, 300.0, 100.0])
+    ranked = np.array([0, 1, 2, 3])
+    is_chosen = selection._greedy(coverage, ranked, budget=1_000)
+    assert is_chosen.tolist() == [True, False, True, True]
+
+
+@pytest.mark.parametrize(
+    "greedy_profit_total, expected_winner",
+    [(9.99, "table"), (10.0, "table"), (10.01, "greedy")],
+)
+def test_most_profitable_boundary(greedy_profit_total, expected_winner):
+    # Catches: picking the wrong candidate, or switching on an exact tie.
+    profit = np.array([10.0, greedy_profit_total])
+    candidates = {
+        "table": np.array([True, False]),
+        "greedy": np.array([False, True]),
+    }
+    winner, _ = selection._most_profitable(candidates, profit)
+    assert winner == expected_winner
+
+
+def test_fallback_never_worse_than_greedy_or_table(monkeypatch):
+    # Catches: the fallback returning an answer worse than one it already had.
+    monkeypatch.setattr(selection, "MAX_STATES", 1)
+    random_generator = np.random.default_rng(9)
+    for profit_per_dollar_noise in (0.0, 0.02):
+        coverage = random_generator.integers(1_000, 140_000, 2_000).astype(float)
+        noise = random_generator.uniform(0, profit_per_dollar_noise, 2_000)
+        profit = coverage * (0.05 + noise)
+        budget = 10_000_000
+        is_chosen = choose_customers(profit, coverage, budget=budget)
+        assert_valid(is_chosen, profit, coverage, budget)
+        eligible = selection._eligible(profit, coverage, budget)
+        ranked = selection._rank(profit, coverage, eligible)
+        cut_off = selection._find_cut_off(coverage, ranked, budget)
+        table = selection._solve_core(
+            profit, coverage, ranked, cut_off, budget, 300, use_table=True
+        )
+        greedy = selection._greedy(coverage, ranked, budget)
+        assert profit[is_chosen].sum() >= profit[table].sum() - 1e-6
+        assert profit[is_chosen].sum() >= profit[greedy].sum() - 1e-6
+
+
+def test_fallback_tries_a_smaller_exact_search(monkeypatch):
+    # Catches: never trying the smaller exact search. The limit is set between
+    # what a 150-customer search needs and what a 300-customer search needs.
+    # Nearly tied customers (5-6% profit per dollar) make the search work hard.
+    random_generator = np.random.default_rng(5)
+    coverage = random_generator.integers(1_000, 140_000, 300).astype(float)
+    profit = coverage * (0.05 + random_generator.uniform(0, 0.01, 300))
+    budget = coverage.sum() / 2
+    eligible = selection._eligible(profit, coverage, budget)
+    ranked = selection._rank(profit, coverage, eligible)
+    cut_off = selection._find_cut_off(coverage, ranked, budget)
+
+    def peak_options(core_size):
+        core_start, core_end = selection._core_bounds(cut_off, core_size, len(ranked))
+        locked_in_coverage = coverage[ranked[:core_start]].sum()
+        borderline = ranked[core_start:core_end]
+        _, peak = selection._exact_dollar_core(
+            coverage[borderline],
+            profit[borderline],
+            budget - locked_in_coverage,
+            max_states=10**9,
+        )
+        return peak
+
+    peak_for_150, peak_for_300 = peak_options(150), peak_options(300)
+    assert peak_for_150 < peak_for_300
+    monkeypatch.setattr(selection, "MAX_STATES", peak_for_150)
+    candidates = selection._fallback_candidates(
+        profit, coverage, ranked, cut_off, budget
+    )
+    assert set(candidates) == {"table", "greedy", "exact on 150"}
