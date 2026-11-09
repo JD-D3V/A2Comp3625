@@ -8,8 +8,31 @@ Question 1:
 The supervised learning model you used: report its accuracy, sensitivity, and specificity in predicting claims.
 Refer to specific line numbers where these things are measured.
 
+We used logistic regression that we wrote from scratch with numpy (claim_model.py).
+The weights are learned with gradient descent on log-loss (claim_model.py lines 26-32).
+On top of the original features, the model also gets each feature squared and each
+pair of features multiplied together (claim_model.py lines 12-17). This lets it pick
+up curved effects and effects that depend on a second feature. The output is a claim
+probability for each customer.
 
+We trained on all 21 features and tested on the 20,000 customers where
+index % 5 == 0. Those rows were never used for training. Counting a customer as a
+"claim" when the probability is 0.5 or higher, we got
 
+    accuracy    = 69.3%   (metrics.py lines 14-17)
+    sensitivity = 27.3%   (metrics.py lines 19-20)
+    specificity = 90.5%   (metrics.py lines 22-23)
+
+All three come from the confusion matrix in metrics.py lines 4-12. The test
+predictions are made at claim_model.py line 118, and line 119 calls report(),
+which prints them.
+
+For comparison, saying "no claim" for everyone already gets 66.5% accuracy but 0%
+sensitivity, because only 33.5% of customers claim. Our premiums use the probability
+directly and not a yes/no answer, so we care more about log-loss. It is 0.566 on the
+test set, compared with 0.638 for giving everyone the average claim rate. The
+calibration table (metrics.py lines 44-54, run at claim_model.py line 121) compares
+the predicted probabilities with the real claim rates.
 
 
 Question 2:
