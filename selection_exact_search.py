@@ -1,5 +1,5 @@
-"""The earlier version of customer selection, kept to show how it was built.
-set_premium does not use this file. It uses selection.py.
+"""The earlier version of customer selection, kept to show Eric an attempt at the
+best possible solution. set_premium does not use this file. It uses selection.py.
 
 This version solves the borderline customers with an exact search. It works like
 the breadth-first search from the Search slides: there is one level per customer,
