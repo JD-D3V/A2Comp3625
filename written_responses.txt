@@ -20,7 +20,7 @@ pair of features multiplied together (claim_model.py lines 12-17). This lets it 
 up curved effects and effects that depend on a second feature. The output is a claim
 probability for each customer.
 
-We trained on all 21 features and tested on the 20,000 customers where
+For this test we trained on all 21 features and tested on the 20,000 customers where
 index % 5 == 0. Those rows were never used for training. Counting a customer as a
 "claim" when the probability is 0.5 or higher, we got
 
@@ -38,6 +38,10 @@ directly and not a yes/no answer, so we care more about log-loss. It is 0.566 on
 test set, compared with 0.638 for giving everyone the average claim rate. The
 calibration table (metrics.py lines 44-54, run at claim_model.py line 121) compares
 the predicted probabilities with the real claim rates.
+
+The final saved model uses the 13 features picked by the feature search, and it scores almost the same on these customers.
+With the probability correction that set_premium applies on top, it gets 69.8% accuracy,
+41.7% sensitivity and 83.9% specificity.
 
 
 Question 2:
@@ -68,15 +72,15 @@ In this assignment scenario, which party is acting according to the principle of
 
 Both, but they are using different utility functions.
 
-The customer is risk averse so they are following the logarithmic utility curve from the assignment. They look at
-two options, one is paying the premium, which is a small loss they know for sure. The other is going without insurance, 
+The customer's utility follows the logarithmic curve from the assignment, which makes them risk averse. They look at
+two options, one is paying the premium, which is a loss they know for sure. The other is going without insurance, 
 which is a gamble where they might lose the whole coverage amount in an unfortunate circumstance. They work out the expected 
 utility of each and only buy if paying the premium is better. In our code that check is passes_utility_check in pricing.py.
 
 Our program just tries to make the most money on average. For each customer, the expected profit is the premium minus the 
-chance they claim times the coverage. Then it picks the group of customers that adds up to the most expected profit and still fits
+chance they claim times the coverage. Then it looks for the group of customers that adds up to the most expected profit and still fits
 within the $100 million. Our program treats every dollar the same, so for us the most expected dollars is the most expected utility.
 That means we follow the same principle, we just don't care about risk the way the customer does.
 
-Because the customer doesn't like risk, they will pay a bit more than what they would lose on average just to not have to take the gamble.
+Because the customer doesn't like risk, they will pay more than what they would lose on average just to not have to take the gamble.
 So if we charge anything between our break-even price and the most they would pay, both of us come out ahead. We charge halfway between those two.
