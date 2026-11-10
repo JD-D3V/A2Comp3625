@@ -45,6 +45,7 @@ calls it.
 | `calibration.py` | Learns and applies the probability correction table |
 | `pricing.py` | The utility curve, the customer's maximum premium, the utility check, `set_prices` |
 | `selection.py` | Chooses customers within the budget |
+| `selection_exact_search.py` | The earlier selection, an exact search with pruning. Kept for reference, not used by `set_premium` |
 | `metrics.py` | Accuracy, sensitivity, specificity, log-loss and a calibration table |
 | `simulate.py` | Backtest and mock competition used to think about the price level |
 | `check_vs_sklearn.py` | Compares our logistic regression with scikit-learn's |
