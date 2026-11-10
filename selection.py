@@ -18,11 +18,13 @@ DOLLARS_PER_CELL = 25  # the table's budget step: smaller is closer to exact
 def _ranked_eligible(profit, coverage, budget):
     """Customers we could ever take (valid numbers, profit above 0, coverage
     above 0 that fits the budget), best profit per dollar of coverage first."""
-    is_eligible = np.isfinite(profit) & np.isfinite(coverage)
-    is_eligible &= (profit > 0) & (coverage > 0) & (coverage <= budget)
-    customers = np.flatnonzero(is_eligible)
+    has_valid_numbers = np.isfinite(profit) & np.isfinite(coverage)
+    is_worth_taking = (profit > 0) & (coverage > 0) & (coverage <= budget)
+    customers = np.flatnonzero(has_valid_numbers & is_worth_taking)
+
     profit_per_dollar = profit[customers] / coverage[customers]
-    return customers[np.argsort(-profit_per_dollar, kind="stable")]
+    best_first = np.argsort(-profit_per_dollar, kind="stable")
+    return customers[best_first]
 
 
 def _fill(is_chosen, ranked, coverage, budget):
@@ -48,20 +50,28 @@ def _knapsack_table(profit, coverage, budget):
     size = np.ceil(coverage / DOLLARS_PER_CELL).astype(int)
     best_profit = np.zeros(cells + 1)
     took = np.zeros((len(profit), cells + 1), dtype=bool)
-    for position in range(len(profit)):
-        if size[position] <= cells:
-            with_customer = np.full(cells + 1, -np.inf)
-            with_customer[size[position] :] = (
-                best_profit[: cells + 1 - size[position]] + profit[position]
-            )
-            took[position] = with_customer > best_profit
-            best_profit = np.maximum(best_profit, with_customer)
 
+    for position in range(len(profit)):
+        blocks_needed = size[position]
+        if blocks_needed > cells:
+            continue  # this customer alone is bigger than the budget left
+
+        # Taking this customer: their profit plus the best we could already do
+        # with blocks_needed fewer blocks. Cells too small for them stay at -inf.
+        with_customer = np.full(cells + 1, -np.inf)
+        best_with_room_left = best_profit[: cells + 1 - blocks_needed]
+        with_customer[blocks_needed:] = best_with_room_left + profit[position]
+
+        took[position] = with_customer > best_profit
+        best_profit = np.maximum(best_profit, with_customer)
+
+    # Walk back from the last customer to read off who was taken.
     chosen_positions = []
+    blocks_left = cells
     for position in reversed(range(len(profit))):
-        if took[position, cells]:
+        if took[position, blocks_left]:
             chosen_positions.append(position)
-            cells -= size[position]
+            blocks_left -= size[position]
     return chosen_positions
 
 
@@ -82,14 +92,24 @@ def choose_customers(expected_profit, coverage, budget=BUDGET):
         is_chosen[ranked] = True
         return is_chosen
 
-    cut_off = int(np.searchsorted(np.cumsum(coverage[ranked]), budget, side="right"))
-    core_start = max(0, cut_off - CORE_SIZE // 2)
+    # Where the budget runs out if we take customers in ranked order.
+    coverage_so_far = np.cumsum(coverage[ranked])
+    cut_off = int(np.searchsorted(coverage_so_far, budget, side="right"))
+
+    # Customers well above the cut-off are locked in. The CORE_SIZE customers
+    # around it are the borderline ones the table decides between.
+    half_core = CORE_SIZE // 2
+    core_start = max(0, cut_off - half_core)
+    core_end = cut_off + half_core
     is_chosen[ranked[:core_start]] = True
-    borderline = ranked[core_start : cut_off + CORE_SIZE // 2]
+    borderline = ranked[core_start:core_end]
+
     budget_left = budget - coverage[is_chosen].sum()
     picks = _knapsack_table(profit[borderline], coverage[borderline], budget_left)
     is_chosen[borderline[picks]] = True
     is_chosen = _fill(is_chosen, ranked, coverage, budget)
 
     greedy = _fill(np.zeros(len(profit), dtype=bool), ranked, coverage, budget)
-    return greedy if profit[greedy].sum() > profit[is_chosen].sum() else is_chosen
+    if profit[greedy].sum() > profit[is_chosen].sum():
+        return greedy
+    return is_chosen

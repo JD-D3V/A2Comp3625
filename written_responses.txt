@@ -13,15 +13,70 @@ Question 1:
 The supervised learning model you used: report its accuracy, sensitivity, and specificity in predicting claims.
 Refer to specific line numbers where these things are measured.
 
+We used logistic regression that we wrote from scratch with numpy (claim_model.py).
+The weights are learned with gradient descent on log-loss (claim_model.py lines 26-32).
+On top of the original features, the model also gets each feature squared and each
+pair of features multiplied together (claim_model.py lines 12-17). This lets it pick
+up curved effects and effects that depend on a second feature. The output is a claim
+probability for each customer.
 
+We trained on all 21 features and tested on the 20,000 customers where
+index % 5 == 0. Those rows were never used for training. Counting a customer as a
+"claim" when the probability is 0.5 or higher, we got
 
+    accuracy    = 69.3%   (metrics.py lines 14-17)
+    sensitivity = 27.3%   (metrics.py lines 19-20)
+    specificity = 90.5%   (metrics.py lines 22-23)
+
+All three come from the confusion matrix in metrics.py lines 4-12. The test
+predictions are made at claim_model.py line 118, and line 119 calls report(),
+which prints them.
+
+For comparison, saying "no claim" for everyone already gets 66.5% accuracy but 0%
+sensitivity, because only 33.5% of customers claim. Our premiums use the probability
+directly and not a yes/no answer, so we care more about log-loss. It is 0.566 on the
+test set, compared with 0.638 for giving everyone the average claim rate. The
+calibration table (metrics.py lines 44-54, run at claim_model.py line 121) compares
+the predicted probabilities with the real claim rates.
 
 
 Question 2:
 How confident are you that your model has not overfit the historical data? Why?
+
+We are pretty confident that it has not overfit. 
+
+We held back 20,000 customers that the model never trained on. The log-loss was 0.5663 on the 80,000 customers 
+it trained on and 0.5657 on the 20,000 it never saw, and lower is better. Those are basically the same number, 
+if the model had just memorized the training data it would do a lot better on the customers it already saw, which it
+doesn't.
+
+The feature search helps with this too. It used 5-fold cross-validation, so a feature was only kept if it made the score
+better on customers that were left out of training, and that is why 8 of the 21 columns got dropped. With the 13 features 
+we ended up with, the training loss was 0.5662 and the validation loss was 0.5675, which is very close. The model is also 
+very small compared to how much data we have. It only has 104 weights and it learned them from 80,000 customers, so there 
+is not much it could memorize. The correction table we put on top was also built only from predictions on
+customers the model had not trained on.
+
+What we can't know is how it does on new customers that behave differently from the ones in the historical data, 
+since everything above was tested on customers like the ones we were given.
 
 
 
 
 Question 3:
 In this assignment scenario, which party is acting according to the principle of maximum expected utililty? The customer? Your program? Both?
+
+Both, but they are using different utility functions.
+
+The customer is risk averse so they are following the logarithmic utility curve from the assignment. They look at
+two options, one is paying the premium, which is a small loss they know for sure. The other is going without insurance, 
+which is a gamble where they might lose the whole coverage amount in an unfortunate circumstance. They work out the expected 
+utility of each and only buy if paying the premium is better. In our code that check is passes_utility_check in pricing.py.
+
+Our program just tries to make the most money on average. For each customer, the expected profit is the premium minus the 
+chance they claim times the coverage. Then it picks the group of customers that adds up to the most expected profit and still fits
+within the $100 million. Our program treats every dollar the same, so for us the most expected dollars is the most expected utility.
+That means we follow the same principle, we just don't care about risk the way the customer does.
+
+Because the customer doesn't like risk, they will pay a bit more than what they would lose on average just to not have to take the gamble.
+So if we charge anything between our break-even price and the most they would pay, both of us come out ahead. We charge halfway between those two.
